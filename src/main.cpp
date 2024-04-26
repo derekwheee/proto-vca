@@ -1,6 +1,9 @@
+// VCA_1 output is wired to the wrong pin
+
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_DotStar.h>
+#include <Adafruit_ADS1X15.h>
 
 // DotStar config
 #define NUM_LEDS 1
@@ -8,11 +11,11 @@
 #define DS_CLCK_PIN 6
 
 #define MAIN_GAIN_PIN A2
-// #define VCA1_GAIN_PIN A3
-// #define VCA1_CV_PIN A4
-// #define VCA1_INPUT_PIN A5
+#define VCA1_GAIN_PIN A3
+#define VCA1_CV_PIN 1
+#define VCA1_INPUT_PIN 2
 #define VCA1_OUTPUT_PIN A0
-#define VCA2_GAIN_PIN A3 // TODO: This is actually VCA1's gain, VCA2 is not wired
+#define VCA2_GAIN_PIN A3 // TODO: Switch this back to 0
 #define VCA2_CV_PIN A4
 #define VCA2_INPUT_PIN A5
 #define VCA2_OUTPUT_PIN A1
@@ -21,6 +24,7 @@
 #define ANALOG_HIGH 1023.0
 #define DAC_HIGH 4095.0
 
+Adafruit_ADS1015 ads1015;
 Adafruit_DotStar pixel(NUM_LEDS, DS_DATA_PIN, DS_CLCK_PIN, DOTSTAR_BRG);
 
 // Define scaling ranges
@@ -43,17 +47,17 @@ struct VCA
 };
 
 VCA vcas[] = {
-    // {
-    //     invertGain : true,
-    //     gainPin : VCA1_GAIN_PIN,
-    //     cvPin : VCA1_CV_PIN,
-    //     inputPin : VCA1_INPUT_PIN,
-    //     outputPin : VCA1_OUTPUT_PIN,
-    //     gain : 0,
-    //     cv : 0,
-    //     input : 0,
-    //     output : 0
-    // },
+    {
+        invertGain : true,
+        gainPin : VCA1_GAIN_PIN,
+        cvPin : VCA1_CV_PIN,
+        inputPin : VCA1_INPUT_PIN,
+        outputPin : VCA1_OUTPUT_PIN,
+        gain : 0,
+        cv : 0,
+        input : 0,
+        output : 0
+    },
     {
         invertGain : true,
         gainPin : VCA2_GAIN_PIN,
@@ -71,13 +75,18 @@ int vcaCount = sizeof(vcas) / sizeof(vcas[0]);
 
 float mainGainFactor;
 float getAmplificationFactor(VCA vca);
+uint32_t readAnalogPin(int pin);
 float scale(float value, const double inputRange[2], const double outputRange[2])
 {
     return (value - inputRange[0]) * (outputRange[1] - outputRange[0]) / (inputRange[1] - inputRange[0]) + outputRange[0];
 }
 
+bool ranOnce = false;
+
 void setup()
 {
+    ads1015.begin();
+
     pixel.begin();
     pixel.show();
 
@@ -91,9 +100,9 @@ void loop()
     for (int i = 0; i < vcaCount; i++)
     {
         VCA vca = vcas[i];
-        vca.gain = analogRead(vca.gainPin);
-        vca.cv = analogRead(vca.cvPin);
-        vca.input = analogRead(vca.inputPin);
+        vca.gain = readAnalogPin(vca.gainPin);
+        vca.cv = readAnalogPin(vca.cvPin);
+        vca.input = readAnalogPin(vca.inputPin);
 
         float amplification = getAmplificationFactor(vca);
 
@@ -113,4 +122,21 @@ float getAmplificationFactor(VCA vca)
     float cvFactor = scale(vca.cv, voltageRange, amplificationRange);
 
     return mainGainFactor * vcaGainFactor * cvFactor;
+}
+
+uint32_t readAnalogPin(int pin)
+{
+    u_int32_t value = 0;
+
+    if (pin >= A0)
+    {
+        value = analogRead(pin);
+    }
+    else
+    {
+        // TODO: Figure out why this is crashing
+        // value = ads1015.readADC_Differential_0_1();
+    }
+
+    return value;
 }
