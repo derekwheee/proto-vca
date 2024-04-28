@@ -1,31 +1,22 @@
-// VCA_1 output is wired to the wrong pin
+// TODO: Swap out ADCs
+// TODO: Update pin mapping
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_DotStar.h>
-#include <Adafruit_ADS1X15.h>
+#include <Adafruit_ADS7830.h>
+#include <SAMDTimerInterrupt.h>
+#include <config.h>
 
-// DotStar config
-#define NUM_LEDS 1
-#define DS_DATA_PIN 8
-#define DS_CLCK_PIN 6
+SAMDTimer sequenceTimer(SELECTED_TIMER);
 
-#define MAIN_GAIN_PIN A2
-#define VCA1_GAIN_PIN A3
-#define VCA1_CV_PIN 1
-#define VCA1_INPUT_PIN 2
-#define VCA1_OUTPUT_PIN A0
-#define VCA2_GAIN_PIN A3 // TODO: Switch this back to 0
-#define VCA2_CV_PIN A4
-#define VCA2_INPUT_PIN A5
-#define VCA2_OUTPUT_PIN A1
+Adafruit_ADS7830 adc;
+Adafruit_DotStar pixel(NUM_LEDS, DS_DATA_PIN, DS_CLCK_PIN, DOTSTAR_BRG);
 
 // Constants
-#define ANALOG_HIGH 1023.0
-#define DAC_HIGH 4095.0
-
-Adafruit_ADS1015 ads1015;
-Adafruit_DotStar pixel(NUM_LEDS, DS_DATA_PIN, DS_CLCK_PIN, DOTSTAR_BRG);
+const int ANALOG_HIGH = 1023;
+const int DAC_HIGH = 4095;
+const int I2C_BAUD_HIGH_SPEED = 3400000; // 3.4MHz
 
 // Define scaling ranges
 const double dacRange[2] = {0, DAC_HIGH};
@@ -47,17 +38,17 @@ struct VCA
 };
 
 VCA vcas[] = {
-    {
-        invertGain : true,
-        gainPin : VCA1_GAIN_PIN,
-        cvPin : VCA1_CV_PIN,
-        inputPin : VCA1_INPUT_PIN,
-        outputPin : VCA1_OUTPUT_PIN,
-        gain : 0,
-        cv : 0,
-        input : 0,
-        output : 0
-    },
+    // {
+    //     invertGain : true,
+    //     gainPin : VCA1_GAIN_PIN,
+    //     cvPin : VCA1_CV_PIN,
+    //     inputPin : VCA1_INPUT_PIN,
+    //     outputPin : VCA1_OUTPUT_PIN,
+    //     gain : 0,
+    //     cv : 0,
+    //     input : 0,
+    //     output : 0
+    // },
     {
         invertGain : true,
         gainPin : VCA2_GAIN_PIN,
@@ -74,6 +65,8 @@ VCA vcas[] = {
 int vcaCount = sizeof(vcas) / sizeof(vcas[0]);
 
 float mainGainFactor;
+float amplification;
+void handleInterrupt();
 float getAmplificationFactor(VCA vca);
 uint32_t readAnalogPin(int pin);
 float scale(float value, const double inputRange[2], const double outputRange[2])
@@ -85,10 +78,20 @@ bool ranOnce = false;
 
 void setup()
 {
-    ads1015.begin();
+    // Use high speed I2C to get the best ADC sampling rate
+    Wire.setClock(I2C_BAUD_HIGH_SPEED);
+
+    if (!adc.begin())
+    {
+        Serial.println("Failed to initialize ADS7830!");
+        while (1)
+            ;
+    }
 
     pixel.begin();
     pixel.show();
+
+    sequenceTimer.attachInterruptInterval_MS(0.1, handleInterrupt);
 
     Serial.begin(115200);
 }
@@ -99,21 +102,28 @@ void loop()
 
     for (int i = 0; i < vcaCount; i++)
     {
-        VCA vca = vcas[i];
+        VCA &vca = vcas[i];
+
+        amplification = getAmplificationFactor(vca);
         vca.gain = readAnalogPin(vca.gainPin);
         vca.cv = readAnalogPin(vca.cvPin);
         vca.input = readAnalogPin(vca.inputPin);
-
-        float amplification = getAmplificationFactor(vca);
-
         vca.output = scale(vca.input * amplification, voltageRange, dacRange);
-
-        analogWrite(vca.outputPin, vca.output);
-
-        pixel.setPixelColor(0, pixel.Color(0, 0, 255 * vca.output / DAC_HIGH));
     }
 
+    pixel.setPixelColor(0, pixel.Color(0, 255 * vcas[0].output / DAC_HIGH, 255 * vcas[0].output / DAC_HIGH));
+
     pixel.show();
+}
+
+void handleInterrupt()
+{
+    for (int i = 0; i < vcaCount; i++)
+    {
+        VCA &vca = vcas[i];
+
+        analogWrite(vca.outputPin, vca.output);
+    }
 }
 
 float getAmplificationFactor(VCA vca)
@@ -134,8 +144,7 @@ uint32_t readAnalogPin(int pin)
     }
     else
     {
-        // TODO: Figure out why this is crashing
-        // value = ads1015.readADC_Differential_0_1();
+        value = adc.readADCsingle(pin);
     }
 
     return value;
